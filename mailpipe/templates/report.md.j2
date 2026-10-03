@@ -1,0 +1,71 @@
+# mailpipe report
+
+Run {{ run.run_id }} · {{ run.started_at }} → {{ run.finished_at }} · config `{{ run.config_hash }}` · LLM `{{ cfg.llm.model }}`
+
+## Run summary
+
+| Files found | Parsed | Skipped (done) | Failed | Total time | LLM calls | LLM tokens | .msg with body |
+|---|---|---|---|---|---|---|---|
+| {{ stats.discover.found if stats.discover else '-' }} | {{ files.get('parsed', 0) }} | {{ stats.discover.skipped_done if stats.discover else 0 }} | {{ files.get('failed', 0) }} | {{ stats.total_s }}s | {{ stats.llm.calls if stats.llm else 0 }} | {{ (stats.llm.prompt_tokens or 0) + (stats.llm.completion_tokens or 0) if stats.llm else 0 }} | {{ parse_rate|pct }} |
+
+Emails {{ counts.emails }} (nested {{ counts.nested }}) · threads {{ counts.threads }} · attachments {{ counts.attachments }} · sheets {{ counts.sheets }} · entities {{ counts.entities }} · action items {{ counts.actions }} · chunks {{ counts.chunks }} ({{ counts.embedded }} embedded)
+
+## Categories
+
+| Category | Emails | Avg confidence |
+|---|---|---|
+{% for c in categories %}
+| {{ c.category }} | {{ c.n }} | {{ '%.2f'|format(c.conf or 0) }} |
+{% endfor %}
+
+{{ low_conf }} emails flagged for priority review.
+
+## Open action items
+
+{% for a in open_actions %}
+- {% if a.due_date %}**{{ a.due_date }}** {% endif %}{{ a.action }}{% if a.owner %} ({{ a.owner }}){% endif %}
+
+{% else %}
+None.
+{% endfor %}
+
+Needs reply, older than {{ cfg.thresholds.needs_reply_days }} days: {{ flags.overdue_replies|length }} · deadlines within {{ cfg.thresholds.deadline_days }} days: {{ flags.deadlines|length }}
+
+## Language check
+
+Simplified Chinese remaining after OpenCC: **{{ still_simplified }}** of {{ generated }} generated texts.
+{% for k, v in opencc.items() %}
+- {{ k }}: {{ v[0] }} of {{ v[1] }} fixed by OpenCC
+{% endfor %}
+
+## GPU
+
+| Phase | Need GB | Peak GB | Device | Fallback | Notes |
+|---|---|---|---|---|---|
+{% for name, p in vram.items() %}
+| {{ name }} | {{ p.need_gb }} | {{ p.peak_gb if p.peak_gb is not none else '-' }} | {{ p.device }} | {{ 'yes' if p.fallback else '' }} | {{ p.notes|join('; ') }} |
+{% endfor %}
+
+## Failures
+
+{% for f in failures %}
+- `{{ f.path }}`: {{ f.error }}
+{% endfor %}
+{% for f in stage_failures %}
+- stage {{ f.stage }}: {{ f.n }} {{ f.status }} (e.g. {{ f.example|short(100) }})
+{% endfor %}
+{% if not failures and not stage_failures %}None.{% endif %}
+
+## Review metrics
+
+{% if metrics.reviewed %}
+- Category accuracy: {{ metrics.category_accuracy|pct }} ({{ metrics.category_n }} reviewed)
+- Action item validity: {{ metrics.action_validity|pct }} ({{ metrics.action_n }} reviewed)
+- Average summary rating: {{ '%.2f'|format(metrics.summary_rating) if metrics.summary_rating else '-' }}
+- Estimated entity recall: {{ metrics.entity_recall|pct }}
+{% for t, v in metrics.entity_precision.items() %}
+- Entity precision, {{ t }}: {{ v.precision|pct }} ({{ v.n }})
+{% endfor %}
+{% else %}
+No reviews imported yet.
+{% endif %}

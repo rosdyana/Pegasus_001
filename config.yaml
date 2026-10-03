@@ -1,0 +1,110 @@
+input_dir: /data/mail
+output_dir: ./out
+
+llm:
+  # api: ollama  -> native /api/chat (JSON-schema `format`, per-request num_ctx and keep_alive)
+  # api: openai  -> any OpenAI-compatible server (llama-server, Azure OpenAI); set base_url to its /v1
+  api: ollama
+  base_url: http://localhost:11434
+  api_key: ollama          # ignored by Ollama; used for openai-compatible servers
+  model: qwen3:14b
+  fallback_model: qwen3:8b
+  temperature: 0
+  num_ctx: 8192
+  reduced_num_ctx: 4096    # OOM ladder step 2
+  max_input_tokens: 6000
+  max_output_tokens: 1500
+  think: false             # qwen3 thinking mode off; set null for models that don't support it
+  vram_gb: 11              # weights + KV cache at num_ctx, tune from report peaks
+  fallback_vram_gb: 7
+  timeout_s: 600
+  # attachments longer than this get a 3-5 bullet LLM summary
+  attachment_summary_min_chars: 3000
+
+embedding:
+  model: bge-m3
+  batch_size: 32
+  vram_gb: 2
+  cpu_fallback: true
+
+gpu:
+  safety_margin_gb: 1.5
+  monitor_interval_s: 1
+  unload_wait_s: 30
+  ollama_env:
+    OLLAMA_MAX_LOADED_MODELS: 1
+    OLLAMA_NUM_PARALLEL: 1
+    OLLAMA_FLASH_ATTENTION: 1
+    OLLAMA_KV_CACHE_TYPE: q8_0
+
+language:
+  output: zh-TW            # language for generated summaries and actions
+  english_only_threads: en # set to zh-TW to force Chinese everywhere
+  opencc_profile: s2twp
+
+gliner:
+  model: urchade/gliner_multi-v2.1
+  labels: [company, person, product model, deadline, project]
+  # Chinese label names are tried alongside the English ones and mapped back
+  label_aliases:
+    公司: company
+    人名: person
+    產品型號: product model
+  use_label_aliases: false
+  threshold: 0.5
+  batch_size: 8            # halved automatically on OOM
+  fp16: true
+  vram_gb: 2
+  window_words: 300        # GLiNER max length is 384 tokens
+  window_overlap: 30
+  max_chars_per_attachment: 20000
+
+clean:
+  # exact-match legal disclaimers (add the real ones after the first run)
+  disclaimers: []
+  # trailing paragraphs seen at the end of this many emails are treated as boilerplate
+  boilerplate_min_emails: 3
+  boilerplate_min_same_sender: 2
+
+taxonomy:
+  - name: rfq_quotation
+    description: Requests for quotation, pricing, or quotes sent
+  - name: purchase_order
+    description: POs, order confirmations, order changes
+  - name: shipping_logistics
+    description: Shipment status, delivery, customs, tracking
+  - name: issue_complaint
+    description: Quality problems, defects, complaints, RMA
+  - name: schedule_meeting
+    description: Meeting requests, schedule coordination
+  - name: approval_request
+    description: Requests to approve, sign off, or confirm
+  - name: report_update
+    description: Status reports, weekly updates, shared data
+  - name: other
+    description: Anything that does not fit above
+
+# patterns run in this order; a later pattern never re-tags a span an earlier one matched
+regex:
+  po_number: '\bPO[-\s]?\d{6,10}\b'
+  invoice_number: '\b(?:INV|Invoice)[-#\s]?\d{5,12}\b'
+  amount: '(?:NT\$|NTD|USD|US\$|新台幣)\s?\d[\d,]*(?<=\d)(?:\.\d+)?(?:\s?元)?'
+  part_number: '\b[A-Z]{2,5}-?\d{3,6}[A-Z0-9-]*\b'
+  email: '[\w.+-]+@[\w-]+(?:\.[\w-]+)+'
+  phone: '(?<![\w-])(?:\+886[-\s]?|0)\d{1,2}[-\s]?\d{3,4}[-\s]?\d{3,4}(?!\d)(?:\s?(?:#|ext\.?)\s?\d{1,5})?'
+
+thresholds:
+  review_confidence: 0.6
+  needs_reply_days: 3
+  deadline_days: 7
+
+chunk:
+  target_tokens: 500
+  sheet_rows_per_chunk: 30
+
+discovery:
+  min_emails: 10           # skip clustering below this
+  samples_per_cluster: 5
+
+# internal email domains; anything else is flagged as an external sender
+internal_domains: []

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mailpipe report</title>
+<style>
+:root { --bg:#fbfbfa; --fg:#1d1d1b; --muted:#6b6b66; --line:#e3e2de; --bar:#3b6ea5; --warn:#b35c00; --bad:#b3261e; --ok:#2e7d32; --card:#fff; }
+@media (prefers-color-scheme: dark) { :root { --bg:#161615; --fg:#e8e6e1; --muted:#9a9890; --line:#33322f; --bar:#7aa7d9; --warn:#f0a050; --bad:#f28b82; --ok:#81c995; --card:#1e1e1c; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", sans-serif; }
+main { max-width:1100px; margin:0 auto; padding:24px 16px 64px; }
+h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:17px; margin:36px 0 10px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+h3 { font-size:14px; margin:18px 0 6px; }
+.muted { color:var(--muted); }
+.kpis { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px; margin-top:16px; }
+.kpi { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+.kpi b { display:block; font-size:20px; font-variant-numeric:tabular-nums; }
+table { border-collapse:collapse; width:100%; background:var(--card); }
+th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { font-weight:600; color:var(--muted); font-size:12px; }
+td.n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.barcell { width:40%; } .bar { height:10px; background:var(--bar); border-radius:2px; }
+.warn { color:var(--warn); } .bad { color:var(--bad); } .ok { color:var(--ok); }
+.scroll { overflow-x:auto; }
+pre { white-space:pre-wrap; word-break:break-word; margin:0; font:12px/1.45 ui-monospace, Menlo, monospace; max-height:220px; overflow:auto; }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; } @media (max-width:700px) { .grid2 { grid-template-columns:1fr; } }
+details { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 12px; margin:8px 0; }
+summary { cursor:pointer; }
+</style>
+</head>
+<body><main>
+<h1>mailpipe report</h1>
+<div class="muted">Run {{ run.run_id }} · {{ run.started_at }} → {{ run.finished_at }} · config {{ run.config_hash }} · LLM {{ cfg.llm.model }}</div>
+
+<div class="kpis">
+  <div class="kpi"><b>{{ stats.discover.found if stats.discover else '-' }}</b>files found</div>
+  <div class="kpi"><b>{{ files.get('parsed', 0) }}</b>parsed</div>
+  <div class="kpi"><b>{{ stats.discover.skipped_done if stats.discover else 0 }}</b>skipped (done)</div>
+  <div class="kpi"><b class="{{ 'bad' if files.get('failed') else '' }}">{{ files.get('failed', 0) }}</b>failed</div>
+  <div class="kpi"><b>{{ stats.total_s }}s</b>total time</div>
+  <div class="kpi"><b>{{ stats.llm.calls if stats.llm else 0 }}</b>LLM calls</div>
+  <div class="kpi"><b>{{ '{:,}'.format((stats.llm.prompt_tokens or 0) + (stats.llm.completion_tokens or 0)) if stats.llm else 0 }}</b>LLM tokens</div>
+  <div class="kpi"><b class="{{ 'ok' if parse_rate is not none and parse_rate >= 0.95 else 'warn' }}">{{ parse_rate|pct }}</b>.msg with body</div>
+</div>
+
+<h2>Contents</h2>
+<table>
+  <tr><th>Emails</th><th>Nested</th><th>Threads</th><th>Attachments</th><th>Sheets</th><th>Entities</th><th>Labels</th><th>Action items</th><th>Chunks (embedded)</th></tr>
+  <tr>{% for k in ['emails','nested','threads','attachments','sheets','entities','labels','actions'] %}<td class="n">{{ counts[k] }}</td>{% endfor %}<td class="n">{{ counts.chunks }} ({{ counts.embedded }})</td></tr>
+</table>
+<h3>Phase timings (s)</h3>
+<table><tr>{% for k in stats.timings_s %}<th>{{ k }}</th>{% endfor %}</tr><tr>{% for v in stats.timings_s.values() %}<td class="n">{{ v }}</td>{% endfor %}</tr></table>
+
+<h2>Category distribution</h2>
+<table>
+<tr><th>Category</th><th class="n">Emails</th><th class="n">Avg conf.</th><th></th></tr>
+{% for c in categories %}
+<tr><td>{{ c.category }}</td><td class="n">{{ c.n }}</td><td class="n">{{ '%.2f'|format(c.conf or 0) }}</td><td class="barcell"><div class="bar" style="width:{{ (100 * c.n / max_cat)|round(1) }}%"></div></td></tr>
+{% endfor %}
+</table>
+<p class="muted">{{ low_conf }} emails flagged for priority review (confidence &lt; {{ cfg.thresholds.review_confidence }}, <code>other</code>, or fallback model).</p>
+
+<div class="grid2">
+<div><h3>Top senders</h3><table>{% for r in top_senders %}<tr><td>{{ r.sender|short(50) }}</td><td class="n">{{ r.n }}</td></tr>{% endfor %}</table></div>
+<div><h3>Busiest threads</h3><table>{% for t in busy_threads %}<tr><td>{{ t.topic|short(60) }}</td><td class="n">{{ t.email_count }}</td></tr>{% endfor %}</table></div>
+</div>
+
+<h2>Open action items</h2>
+{% if open_actions %}
+<div class="scroll"><table><tr><th>Due</th><th>Action</th><th>Owner</th><th>Email</th></tr>
+{% for a in open_actions %}<tr><td class="n">{{ a.due_date or '' }}</td><td>{{ a.action }}</td><td>{{ a.owner or '' }}</td><td class="muted">{{ a.subject|short(50) }}</td></tr>{% endfor %}
+</table></div>
+{% else %}<p class="muted">None.</p>{% endif %}
+
+<h3>Needs reply, older than {{ cfg.thresholds.needs_reply_days }} days ({{ flags.overdue_replies|length }})</h3>
+{% if flags.overdue_replies %}<table><tr><th>Age</th><th>Subject</th><th>From</th><th>Priority</th></tr>
+{% for r in flags.overdue_replies %}<tr><td class="n">{{ r.age_days }}d</td><td>{{ r.subject|short(70) }}</td><td>{{ r.sender|short(40) }}</td><td>{{ r.priority }}</td></tr>{% endfor %}</table>{% else %}<p class="muted">None.</p>{% endif %}
+
+<h3>Deadlines within {{ cfg.thresholds.deadline_days }} days ({{ flags.deadlines|length }})</h3>
+{% if flags.deadlines %}<table><tr><th>Due</th><th>What</th><th>Email</th></tr>
+{% for d in flags.deadlines %}<tr><td class="n {{ 'bad' if d.overdue else '' }}">{{ d.due_date }}</td><td>{{ d.action|short(80) }}</td><td class="muted">{{ d.subject|short(50) }}</td></tr>{% endfor %}</table>{% else %}<p class="muted">None.</p>{% endif %}
+{% if cfg.internal_domains %}<p>External senders: {{ flags.external|length }} emails.</p>{% endif %}
+
+<h2>Entity highlights</h2>
+<div class="grid2">
+{% for title, rows in entities.items() %}
+<div><h3>{{ title }}</h3>{% if rows %}<table>{% for r in rows %}<tr><td>{{ r.v }}</td><td class="n">{{ r.n }}</td></tr>{% endfor %}</table>{% else %}<p class="muted">None found.</p>{% endif %}</div>
+{% endfor %}
+</div>
+
+<h2>Language check (zh-TW)</h2>
+<table><tr><th>Generated text</th><th class="n">Items</th><th class="n">Fixed by OpenCC</th></tr>
+{% for k, v in opencc.items() %}<tr><td>{{ k }}</td><td class="n">{{ v[1] }}</td><td class="n">{{ v[0] }}</td></tr>{% endfor %}
+</table>
+<p>Simplified Chinese remaining after OpenCC: <b class="{{ 'ok' if still_simplified == 0 else 'bad' }}">{{ still_simplified }}</b> of {{ generated }} generated texts.</p>
+
+<h2>GPU and fallbacks</h2>
+<div class="scroll"><table><tr><th>Phase</th><th class="n">Need (GB)</th><th class="n">Baseline (GB)</th><th class="n">Peak (GB)</th><th>Device</th><th>Fallback</th><th>Notes</th></tr>
+{% for name, p in vram.items() %}
+<tr><td>{{ name }}</td><td class="n">{{ p.need_gb }}</td><td class="n">{{ p.baseline_gb if p.baseline_gb is not none else '-' }}</td><td class="n">{{ p.peak_gb if p.peak_gb is not none else '-' }}</td><td>{{ p.device }}</td><td>{{ 'yes' if p.fallback else '' }}</td><td class="muted">{{ p.notes|join('; ') }}</td></tr>
+{% else %}<tr><td colspan="7" class="muted">No GPU phases ran in this run.</td></tr>{% endfor %}
+</table></div>
+{% if stats.llm %}<p>LLM: {{ stats.llm.oom_events }} OOM events, {{ stats.llm.fallbacks }} fallback-model calls, {{ stats.llm.failures }} items failed after the ladder, {{ stats.llm.truncation_warnings }} possible truncations.</p>{% endif %}
+<table><tr><th>Label method</th><th>Model</th><th class="n">Emails</th></tr>{% for m in methods %}<tr><td>{{ m.method }}</td><td>{{ m.model }}</td><td class="n">{{ m.n }}</td></tr>{% endfor %}</table>
+
+<h2>Failures</h2>
+{% if failures %}<h3>Files</h3><div class="scroll"><table>{% for f in failures %}<tr><td>{{ f.path }}</td><td class="bad">{{ f.error }}</td></tr>{% endfor %}</table></div>{% endif %}
+{% if att_failures %}<h3>Attachments</h3><div class="scroll"><table>{% for f in att_failures %}<tr><td>{{ f.filename }}</td><td>{{ f.kind }}</td><td class="bad">{{ f.error }}</td></tr>{% endfor %}</table></div>{% endif %}
+{% if stage_failures %}<h3>Stages</h3><table><tr><th>Stage</th><th>Status</th><th class="n">Items</th><th>Example</th></tr>{% for f in stage_failures %}<tr><td>{{ f.stage }}</td><td class="bad">{{ f.status }}</td><td class="n">{{ f.n }}</td><td class="muted">{{ f.example|short(120) }}</td></tr>{% endfor %}</table>{% endif %}
+<h3>Unsupported attachments</h3>
+{% if unsupported %}<table>{% for u in unsupported %}<tr><td>{{ u.kind }}</td><td class="n">{{ u.n }}</td></tr>{% endfor %}</table>{% else %}<p class="muted">None.</p>{% endif %}
+{% if sheet_flags %}<h3>Low-confidence sheets</h3><table>{% for f in sheet_flags %}<tr><td>{{ f.filename }} / {{ f.name }}</td><td class="warn">{{ f.quality_flag }}</td></tr>{% endfor %}</table>{% endif %}
+{% if not failures and not att_failures and not stage_failures %}<p class="ok">No failures.</p>{% endif %}
+
+<h2>Review metrics</h2>
+{% if metrics.reviewed %}
+<div class="kpis">
+  <div class="kpi"><b>{{ metrics.category_accuracy|pct }}</b>category accuracy ({{ metrics.category_n }})</div>
+  <div class="kpi"><b>{{ metrics.action_validity|pct }}</b>action item validity ({{ metrics.action_n }})</div>
+  <div class="kpi"><b>{{ '%.2f'|format(metrics.summary_rating) if metrics.summary_rating else '-' }}</b>avg summary rating (1-3)</div>
+</div>
+<h3>Per category</h3><table><tr><th>Category</th><th class="n">Reviewed</th><th class="n">Accuracy</th></tr>{% for c, v in metrics.per_category.items() %}<tr><td>{{ c }}</td><td class="n">{{ v.n }}</td><td class="n">{{ v.acc|pct }}</td></tr>{% endfor %}</table>
+<h3>Entities</h3><table><tr><th>Type</th><th class="n">Reviewed</th><th class="n">Precision</th></tr>{% for t, v in metrics.entity_precision.items() %}<tr><td>{{ t }}</td><td class="n">{{ v.n }}</td><td class="n">{{ v.precision|pct }}</td></tr>{% endfor %}</table>
+<p>Estimated entity recall: {{ metrics.entity_recall|pct }} ({{ metrics.missing_count }} missed entities noted).</p>
+{% if metrics.confusion %}<h3>Confusion matrix (rows: predicted, columns: corrected)</h3><div class="scroll"><table><tr><th></th>{% for c in metrics.confusion_labels %}<th>{{ c }}</th>{% endfor %}</tr>
+{% for p in metrics.confusion_labels %}<tr><th>{{ p }}</th>{% for t in metrics.confusion_labels %}<td class="n">{{ metrics.confusion.get(p, {}).get(t, '') }}</td>{% endfor %}</tr>{% endfor %}</table></div>{% endif %}
+{% else %}<p class="muted">No reviews imported yet. Run <code>./run.sh review-export</code>, have the specialist fill it in, then <code>./run.sh review-import --file …</code>.</p>{% endif %}
+
+<h2>Quality samples</h2>
+{% for s in samples %}
+<details><summary><b>{{ s.e.subject or '(no subject)' }}</b> <span class="muted">· {{ s.e.sender|short(40) }} · {{ s.e.category or 'unlabeled' }}{% if s.e.confidence is not none %} ({{ '%.2f'|format(s.e.confidence) }}){% endif %} · {{ s.e.language }}</span></summary>
+<div class="grid2"><div><h3>Raw ({{ s.e.body_source }})</h3><pre>{{ s.e.body_raw }}</pre></div><div><h3>Clean</h3><pre>{{ s.e.body_clean }}</pre></div></div>
+<p class="muted">Entities: {% for x in s.entities %}{{ x.type }}=<b>{{ x.value }}</b>{{ ', ' if not loop.last }}{% else %}none{% endfor %}</p>
+</details>
+{% endfor %}
+</main></body></html>
